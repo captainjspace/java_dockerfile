@@ -1,36 +1,34 @@
-#########################################################
-# Base Dockerfile	                                #
-# docker cannot access parent directories	        #
-# this should be referenced from the root directory     #
-# Author: joshua.s.landman@gmail.com                    #
-# Date: 1/15/2020				        #
-#########################################################
-
-FROM openjdk:8
-EXPOSE 8080
-
-# This will be passed in from build system
-ARG MVN_VERSION
-ARG KEYFILE=<my key file>.json
-ARG PROFILE=dev
-ARG DATE
-ARG JAR_TARGET=./target
-
-# Record build args in container environment for reference
-ENV LMS_VERSION ${MVN_VERSION}
-ENV BUILD_KEYFILE ${KEYFILE}
-ENV BUILD_PROFILE ${PROFILE}
-ENV BUILD_DATE ${DATE}
+#####################################################
+# Base Dockerfile				    #
+# docker cannot access parent directories	    #
+# this should be referenced from the root directory #
+# Author: joshua.s.landman@gmail.com		    #
+# Date: 11/04/2020				    #
+#####################################################
 
 
-# GCP PROJECT CREDENTIALS
-COPY ./${KEYFILE} <my service key file>.json
-ENV GOOGLE_APPLICATION_CREDENTIALS <my service key file>.json
+#build image
+FROM maven:3-jdk-14 as maven-build
 
-# Executable APPLICATION JAR
-COPY ${JAR_TARGET}/myservice-${MVN_VERSION}-SNAPSHOT-exec.jar myservice.jar
+ARG DEPLOY_ENV
+ENV DEPLOY_ENV ${DEPLOY_ENV}
 
-# for -t in development
-ENV LSCOLORS ExFxCxDxBxegedabagacad
+RUN mkdir -p /usr/src/app/src
+COPY pom.xml /usr/src/app
 
-ENTRYPOINT ["java","-jar" ,"myservice.jar"]
+#caches dependencies in image
+RUN mvn -f /usr/src/app/pom.xml dependency:go-offline
+COPY src /usr/src/app/src
+
+#P is the profile defined int pom.xml
+RUN mvn -Dmaven.test.skip=true -f /usr/src/app/pom.xml -PDEPLOY,$DEPLOY_ENV clean package
+
+#assemble deploy image
+FROM openjdk:14-jdk-alpine
+COPY --from=maven-build /usr/src/app/target/my-microservice-DEPLOY.jar /opt/my-microservice.jar
+
+# pass in git hash so you can see the commit that was built in the container
+ARG GIT_HASH=1234567
+ENV GIT_HASH ${GIT_HASH}
+
+ENTRYPOINT ["java","--enable-preview", "-XX:InitialRAMPercentage=70.0", "-XX:MinRAMPercentage=70.0", "-XX:MaxRAMPercentage=70.0", "-jar", "/opt/my-microservice.jar"]
